@@ -5,7 +5,7 @@ Made for Terminal Game Jam
 
 A savage enemy creeps over the horizon. Bombers snake over an iron sky, casting their Plexiglass eyes upon our dear nation.
 You, the player, are our last line of defense. Take command of fighters in GCI: Ground Controlled Intercept, and guide them though cloud and fog
-to destroy the fiendish bombers and defend our glourious homeland.
+to destroy the fiendish bombers and defend our glorious homeland.
 '''
 
 import math
@@ -103,7 +103,7 @@ class Plane(GameObject):
     def __init__(self, x, y, displayChar):
         super().__init__(x, y, displayChar)
         self.fuel = 0
-        self.heading = 0
+        self.heading = 0.0
         self.desiredHeading = self.heading
         self.alive = True
 
@@ -118,11 +118,12 @@ class Plane(GameObject):
             return
         
         # Update heading
-        deltaH = min(abs(self.heading - self.desiredHeading), self.maxTurn)
-        if self.heading - self.desiredHeading > 0:
-            self.heading -= deltaH
-        elif self.heading - self.desiredHeading < 0:
-            self.heading += deltaH
+        # Calculate the shortest difference between desired and current heading
+        diff = (self.desiredHeading - self.heading + 180) % 360 - 180
+        # Clamp the turn to the maxTurn rate
+        delta_h = max(-self.maxTurn, min(self.maxTurn, diff))
+        # Apply the turn and wrap around 360
+        self.heading = (self.heading + delta_h) % 360
 
         # Update position
         rad = math.radians(self.heading)
@@ -191,11 +192,12 @@ class GameController:
         self.base = Base(BASE_POS[0], BASE_POS[1])
 
         # Initializing dynamic objects
-        self.fighters = [Fighter(MAP_XMID + 2*i, MAP_YMID + 2*i) for i in range(FIGHTER_NUMBER - 1)]
+        # FIX: range(FIGHTER_NUMBER) not FIGHTER_NUMBER - 1
+        self.fighters = [Fighter(MAP_XMID + 2*i, MAP_YMID + 2*i) for i in range(FIGHTER_NUMBER)]
         self.bombers = []
         self.crashes = []
 
-    def spawnBomber(self):
+    def spawn_bomber(self):
         # Summons a bomber.
         # Decide which side the bomber will spawn from - N, E, S, W
         side = randint(0, 3)
@@ -217,11 +219,11 @@ class GameController:
         # Create the bomber.
         self.bombers.append(Bomber(bomberPos[0], bomberPos[1], targetCity[0], targetCity[1]))
 
-    def titleCard(self):
+    def title_card(self):
         # Run when the game starts up.
         print(WELCOME_MSG)
 
-    def endGame(self):
+    def end_game(self):
         # Run when the game ends.
         if len(self.cities) <= 0:
             print(LOSS_CITIES)
@@ -235,58 +237,74 @@ class GameController:
         self.turns += 1
         self.headline = ""
 
-        for f in self.fighters:
+        # --- Fighter Update Loop ---
+        # Use a new list to avoid modifying list while iterating
+        surviving_fighters = []
+        for i, f in enumerate(self.fighters):
             f.update()
+            
+            # Refuel the fighter if at base
+            # FIX: Moved this *before* the crash check so fighters can land
+            if distance(f.get_pos(), self.base.get_pos()) <= 1.0:
+                if f.fuel < FIGHTER_MAXFUEL: # Only report if it actually needed fuel
+                    self.headline += f"Fighter {i + 1} has been refueled. "
+                    f.refuel()
+            
             # Fighter crashes if no fuel.
             if f.fuel <= 0:
-                self.headline += f"Fighter {self.fighters.index(f) + 1} has crashed. "
+                self.headline += f"Fighter {i + 1} has crashed. "
                 self.crashes.append(Wreck(f.get_pos()[0], f.get_pos()[1]))
                 f.alive = False
             
-                # Refuel the fighter.
-                if distance(f.get_pos(), self.base.get_pos()) <= 1.0:
-                    self.headline += f"Fighter {self.fighters.index(f) + 1} has been refueled. "
-                    f.refuel()
-            
-            if f.alive == False:
-                self.fighters.remove(f)
-            else:
-                self.headline += f"Fighter {self.fighters.index(f) + 1} is at {f.get_pos()}, facing {f.heading}. "
+            if f.alive:
+                surviving_fighters.append(f)
+                self.headline += f"Fighter {i + 1} is at {f.get_pos()}, facing {round(f.heading)}. "
+        
+        self.fighters = surviving_fighters # Replace old list with survivors
 
-        for b in self.bombers:
+        # --- Bomber Update Loop ---
+        surviving_bombers = []
+        for i, b in enumerate(self.bombers):
             b.update()
+            
             # Bomber crashes if no fuel.
             if b.fuel <= 0:
-                self.headline += f"Bomber {self.bombers.index(b) + 1} has crashed. "
-                self.crashes.append(Wreck(b.get_pos[0], b.get_pos[1]))
+                self.headline += f"Bomber {i + 1} has crashed. "
+                self.crashes.append(Wreck(b.get_pos()[0], b.get_pos()[1]))
                 b.alive = False
 
             else:
                 # Check for intercepts
-                for f in self.fighters:
+                for f_i, f in enumerate(self.fighters):
                     if distance(f.get_pos(), b.get_pos()) <= INTERCEPT_RADIUS:
-                        self.headline += f"Bomber {self.bombers.index(b) + 1} has been intercepted by fighter {self.fighters.index(f) + 1}. "
-                        self.crashes.append(Wreck(b.get_pos[0], b.get_pos[1]))
+                        self.headline += f"Bomber {i + 1} has been intercepted by fighter {f_i + 1}. "
+                        self.crashes.append(Wreck(b.get_pos()[0], b.get_pos()[1]))
                         b.alive = False
+                        break # Bomber is shot down, no need to check other fighters
 
                 # Check if it has reached the city; destroy the city if so.
-                # IMP: Bomber is also destroyed at this stage. For now.
-                for c in self.cities:
-                    if distance(b.get_pos(), c.get_pos()) <= BOMB_RADIUS:
-                        self.headline += f"City {self.cities.index(c) + 1} has been bombed! "
-                        self.crashes.append(Wreck(c.x, c.y))
-                        self.cities.remove(c)
-                        b.alive = False
-                
-                # Try to print the bomber's location. It will fail if the bomber was deleted, above, due to interception or crashing.
+                # Only check if bomber is still alive
                 if b.alive:
-                    print(f"Bomber {self.bombers.index(b) + 1} is at {b.get_pos()}, facing {b.heading}.")
-                else:
-                    self.bombers.remove(b)
+                    # Iterate over a *copy* of self.cities so we can remove from the original
+                    for c in self.cities[:]: 
+                        if distance(b.get_pos(), c.get_pos()) <= BOMB_RADIUS:
+                            city_index = self.cities.index(c) + 1 # Get index *before* removing
+                            self.headline += f"City {city_index} has been bombed! "
+                            self.crashes.append(Wreck(c.x, c.y))
+                            self.cities.remove(c)
+                            b.alive = False
+                            break # Bomber is destroyed after bombing one city
+            
+            if b.alive:
+                surviving_bombers.append(b)
+                self.headline += f"Bomber {i + 1} is at {b.get_pos()}, facing {round(b.heading)}. "
 
-        # Spawn new bomber if the spawn timer is a multiple of the spawn rate; no need for a spawn counter this way.
-        if self.turns % BOMBER_TIMER == 0:
-            self.spawnBomber()
+        self.bombers = surviving_bombers
+
+        # Spawn new bomber if the spawn timer is a multiple of the spawn rate
+        # FIX: Added check for len(self.cities) to prevent crash when all cities are gone
+        if self.turns % BOMBER_TIMER == 0 and len(self.cities) > 0:
+            self.spawn_bomber()
             self.headline += f"Bomber sighted at {self.bombers[-1].get_pos()}! "
 
 
@@ -298,32 +316,45 @@ class GameController:
         # Draw the map to the screen, along with any other data.
         clrs()
         
-        # Initializing a blank map and a list of objects in it
-        map = [[" " for x in range(MAP_WIDTH - 1)] for y in range (MAP_HEIGHT - 1)]
-        objects = self.fighters + self.bombers + self.cities + [self.base] + self.crashes
+        # Initializing a blank map
+        # FIX: Use MAP_WIDTH/HEIGHT directly, not -1
+        map = [[" " for _ in range(MAP_WIDTH)] for _ in range (MAP_HEIGHT)]
 
-        # Insert the objects at the appropriate positions.
-        for obj in objects:
+        # --- Draw static objects ---
+        statics = self.cities + [self.base] + self.crashes
+        for obj in statics:
             x, y = obj.get_pos()
-
-            # Check if the object is in map bounds; if it is, draw it.
-            try:
+            if 0 <= x < MAP_WIDTH and 0 <= y < MAP_HEIGHT:
                 map[y][x] = obj.displayChar
 
-                # A neat trick to distinguish fighters, bombers, and cities. The character below them will be their index number, 
-                # and the character above their heading (rounded to nearest int).
-                # This is overrruled by objects such as cities and other planes.
-                if type(obj) == Fighter:
-                    map[y + 1][x] = str(self.fighters.index(obj) + 1)
-                    map[y - 1][x] = str(round(obj.heading))
-                elif type(obj) == Bomber:
-                    map[y + 1][x] = str(self.bombers.index(obj) + 1)
-                    map[y - 1][x] = str(round(obj.heading))
-                elif type(obj) == City:
-                    map[y + 1][x] = str(self.cities.index(obj) + 1)
+        # --- Draw dynamic objects and labels (more efficient) ---
+        # Draw cities labels
+        for i, c in enumerate(self.cities):
+            x, y = c.get_pos()
+            if 0 <= x < MAP_WIDTH and 0 <= y + 1 < MAP_HEIGHT:
+                map[y + 1][x] = str(i + 1)
+        
+        # Draw fighters and labels
+        for i, f in enumerate(self.fighters):
+            x, y = f.get_pos()
+            if 0 <= x < MAP_WIDTH and 0 <= y < MAP_HEIGHT:
+                map[y][x] = f.displayChar
+                # Add labels with bounds checking
+                if y + 1 < MAP_HEIGHT:
+                    map[y + 1][x] = str(i + 1)
+                if y - 1 >= 0:
+                    map[y - 1][x] = str(round(f.heading))
 
-            except IndexError:
-                pass
+        # Draw bombers and labels
+        for i, b in enumerate(self.bombers):
+            x, y = b.get_pos()
+            if 0 <= x < MAP_WIDTH and 0 <= y < MAP_HEIGHT:
+                map[y][x] = b.displayChar
+                # Add labels with bounds checking
+                if y + 1 < MAP_HEIGHT:
+                    map[y + 1][x] = str(i + 1)
+                if y - 1 >= 0:
+                    map[y - 1][x] = str(round(b.heading))
 
         # Print this turn's "headline"
         print(self.headline)
@@ -337,35 +368,48 @@ class GameController:
         print("_" * MAP_WIDTH)
 
         # Fighter fuel levels
-        for f in self.fighters:
-            print(f"f{self.fighters.index(f) + 1} has {f.fuel} turns of fuel. ")
+        for i, f in enumerate(self.fighters):
+            print(f"f{i + 1} has {f.fuel} turns of fuel. ")
 
-    def takeInp(self):
+    def take_inp(self):
         # Inputs will be taken in the form
         # "f1 150 f2 90 f3 0" etc.
         command = input("Enter your orders: \n>>> ").split()
 
         if len(command) != 0:
             try:
-                for order in command[::2]:
-                    # Here, order == the fighter to be ordered. For the example above, "order" will iterate through ["f1", "f2", "f3"]
-                    # This convoluted line of code selects the fighter indicated, and calls the changeHeading method with the next index in "order"
-                    self.fighters[int(order[1]) - 1].change_heading(int(command[command.index(order) + 1]))
-            except: 
-                print("Invalid order, Commander! We have no time for tomfoolery!")
+                # OPTIMIZE: Clearer loop for parsing
+                for i in range(0, len(command), 2):
+                    fighter_id_str = command[i]   # e.g., "f1"
+                    heading_str = command[i+1]    # e.g., "150"
+
+                    fighter_index = int(fighter_id_str[1]) - 1
+                    heading = int(heading_str)
+
+                    # Check if fighter index is valid
+                    if 0 <= fighter_index < len(self.fighters):
+                        self.fighters[fighter_index].change_heading(heading)
+                    else:
+                        print(f"Invalid order: Fighter {fighter_index + 1} does not exist.")
+
+            # OPTIMIZE: Catch specific errors
+            except (IndexError, ValueError): 
+                print("Invalid order format, Commander! Use 'f1 <hdg> f2 <hdg>'... We have no time for tomfoolery!")
+            except Exception as e:
+                print(f"An unexpected error occurred with your order: {e}")
 
     def run(self):
         # Function that actually runs the game.
-        self.titleCard()
+        self.title_card()
 
         while (len(self.cities) > 0) and (len(self.fighters) > 0) and (self.turns <= 51):
             # Run the game as long as the player has at least one city left and one fighter left.
             # The game lasts 51 turns.
             self.update()
             self.draw()
-            self.takeInp()
+            self.take_inp()
 
-        self.endGame()
+        self.end_game()
 
 '''
 Main function. Runs the program.

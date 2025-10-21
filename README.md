@@ -1,4 +1,4 @@
-# operation-lamp
+# GCI-py
 A text-based game made for Terminal Game Jam.
 
 A savage enemy creeps over the horizon. Bombers snake over an iron sky, casting their Plexiglass eyes upon our dear nation.
